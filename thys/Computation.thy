@@ -235,6 +235,24 @@ lemma fst_stepL: "q\<leadsto>(([], as'), (b # bs, bs'))q' \<Longrightarrow>
   \<exists>q''. \<delta> q (safe_hd as', Symb b) = Some (q'', False, True) \<and> q'' \<leadsto>(([], as'), (bs, bs')) q'"
   by (auto elim: computation.cases)
 
+lemma comp_splitL: "q\<leadsto>(([], as'), (cs @ cs', cs'')) q' \<Longrightarrow>
+  \<exists>q''. q \<leadsto>(([], as'), (cs, cs' @ cs'')) q'' \<and> q'' \<leadsto>(([], as'), (cs', cs'')) q'"
+  by (induction cs arbitrary: q) (fastforce dest!: fst_stepL)+
+
+lemma shift_compL: assumes "r\<leadsto>(([], w), (cs @ cs'), ds')t" "t\<leadsto>((w, []), ds', [])r'"
+  shows "\<exists>t''. r \<leadsto>(([], w), (cs, cs' @ ds')) t'' \<and> t'' \<leadsto>((w, []), (cs' @ ds', [])) r'"
+proof -
+  obtain t'' where t''_def: "r \<leadsto>(([], w), (cs, cs' @ ds')) t''" "t'' \<leadsto>(([], w), (cs', ds')) t"
+    using comp_splitL[OF assms(1)]
+    by auto
+  have comb: "t'' \<leadsto>((w, []), (cs' @ ds', [])) r'"
+    using comp_trans[OF t''_def(2) assms(2)]
+    by auto
+  show ?thesis
+    using t''_def(1) comb
+    by auto
+qed
+
 lemma fst_stepR: "q\<leadsto>((a # as, as'), ([], bs'))q' \<Longrightarrow>
   \<exists>q''. \<delta> q (Symb a, safe_hd bs') = Some (q'', True, False) \<and> q'' \<leadsto>((as, as'), ([], bs')) q'"
   by (auto elim: computation.cases)
@@ -328,8 +346,8 @@ lemma fst_step: "q \<leadsto>((a # as, as'), (b # bs, bs')) q' \<Longrightarrow>
   (\<exists>q''. \<delta> q (Symb a, Symb b) = Some (q'', False, True) \<and> q'' \<leadsto>((a # as, as'), (bs, bs')) q')"
   by (auto simp: safe_hd_def dest: move_one elim: computation.cases)
 
-lemma split_outs: "q \<leadsto>((a # as, as'), (bs, bs')) q' \<Longrightarrow> \<exists>r r' cs cs'. bs = cs @ cs' \<and>
-  (case cs of [] \<Rightarrow> q = r | _ \<Rightarrow> q \<leadsto>(([], a # as @ as'), (cs, cs' @ bs')) r) \<and>
+lemma split_outs: "q \<leadsto>((a # as, as'), (bs, bs')) q' \<Longrightarrow>
+  \<exists>r r' cs cs'. bs = cs @ cs' \<and> q \<leadsto>(([], a # as @ as'), (cs, cs' @ bs')) r \<and>
   \<delta> r (Symb a, safe_hd (cs' @ bs')) = Some (r', True, False) \<and> r' \<leadsto>((as, as'), (cs', bs')) q'"
 proof (induction bs arbitrary: q)
   case Nil
@@ -347,7 +365,7 @@ next
       "r'\<leadsto>((as, as'), b # bs'', bs')q'"
       by auto
     show "\<exists>r r' cs cs'. b # bs'' = cs @ cs' \<and>
-      (case cs of [] \<Rightarrow> q = r | aa # list \<Rightarrow> q\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r) \<and>
+      q\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r \<and>
       \<delta> r (Symb a, safe_hd (cs' @ bs')) = Some (r', True, False) \<and> r'\<leadsto>((as, as'), cs', bs')q'"
       apply (rule exI[of _ q])
       apply (rule exI[of _ r'])
@@ -360,8 +378,7 @@ next
     then obtain s where s_def: "\<delta> q (Symb a, Symb b) = Some (s, False, True)"
       "s\<leadsto>((a # as, as'), bs'', bs')q'"
       by auto
-    obtain r r' cs cs' where split: "bs'' = cs @ cs'"
-      "case cs of [] \<Rightarrow> s = r | aa # list \<Rightarrow> s\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r"
+    obtain r r' cs cs' where split: "bs'' = cs @ cs'" "s\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r"
       "\<delta> r (Symb a, safe_hd (cs' @ bs')) = Some (r', True, False)" "r'\<leadsto>((as, as'), cs', bs')q'"
       using Cons(1)[OF s_def(2)]
       by auto
@@ -372,8 +389,7 @@ next
     have comp_q_r: "q \<leadsto>(([], a # as @ as'), (b # cs, cs' @ bs')) r"
       using split(2) comp_trans[OF comp_q_s] comp_q_s
       by (auto simp: split(1) split: list.splits)
-    show "\<exists>r r' cs cs'. b # bs'' = cs @ cs' \<and>
-      (case cs of [] \<Rightarrow> q = r | _ \<Rightarrow> q\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r) \<and>
+    show "\<exists>r r' cs cs'. b # bs'' = cs @ cs' \<and> q\<leadsto>(([], a # as @ as'), cs, cs' @ bs')r \<and>
       \<delta> r (Symb a, safe_hd (cs' @ bs')) = Some (r', True, False) \<and> r'\<leadsto>((as, as'), cs', bs')q'"
       apply (rule exI[of _ r])
       apply (rule exI[of _ r'])
@@ -383,6 +399,121 @@ next
       done
   qed
 qed
+
+lemma set_zip_upd: "length xs = length ys \<Longrightarrow> (\<And>x y. (x, y) \<in> set (zip xs ys) \<Longrightarrow> \<exists>x'. g x' y) \<Longrightarrow>
+  \<exists>xs'. length xs' = length ys \<and> (\<forall>(x', y) \<in> set (zip xs' ys). g x' y)"
+proof (induction xs ys rule: list_induct2)
+  case (Cons x xs y ys)
+  obtain x' where x'_def: "g x' y"
+    using Cons(3)
+    by auto
+  obtain xs' where xs'_def: "length xs' = length ys" "\<forall>(x', y) \<in> set (zip xs' ys). g x' y"
+    using Cons(2,3)
+    by auto
+  show ?case
+    using x'_def xs'_def
+    by (auto intro!: exI[of _ "x' # xs'"])
+qed auto
+
+lemma set_zip_upd4:
+  assumes "length xs = length ys"
+  shows "(\<And>x y z w. (x, y, z, w) \<in> set (zip xs ys) \<Longrightarrow> \<exists>x'. g x' y z w) \<Longrightarrow>
+    \<exists>xs'. length xs' = length ys \<and> (\<forall>(x', y, z, w) \<in> set (zip xs' ys). g x' y z w)"
+  using set_zip_upd[OF assms, of "\<lambda>x' y. case y of (y', z, w) \<Rightarrow> g x' y' z w"]
+  by auto
+
+lemma split_outss:
+  assumes "\<And>w r r'. (w, r, r') \<in> set ws \<Longrightarrow> r \<leadsto>((w, []), (u, [])) r'"
+  shows "\<exists>cs cs' ts. u = cs @ cs' \<and> length ts = length ws \<and>
+    (\<forall>(t, w, r, r') \<in> set (zip ts ws). r \<leadsto>(([], w), (cs, cs')) t \<and> t \<leadsto>((w, []), (cs', [])) r') \<and>
+    (case concat (map fst ws) of [] \<Rightarrow> cs' = [] | _ \<Rightarrow> \<exists>a \<in> set (zip ts ws).
+      case a of (t, w, r, r') \<Rightarrow> \<exists>t'. \<delta> t (safe_hd w, safe_hd cs') = Some (t', True, False))"
+  using assms
+proof (induction ws)
+  case (Cons wrr' ws)
+  obtain w r r' where wrr'_def: "wrr' = (w, r, r')"
+    by (cases wrr') auto
+  obtain cs cs' ts where ws_def: "u = cs @ cs'" "length ts = length ws"
+    "\<And>t w r r'. (t, w, r, r') \<in> set (zip ts ws) \<Longrightarrow>
+      r \<leadsto>(([], w), (cs, cs')) t \<and> t \<leadsto>((w, []), (cs', [])) r'"
+    "(case concat (map fst ws) of [] \<Rightarrow> cs' = [] | _ \<Rightarrow> \<exists>a \<in> set (zip ts ws).
+      case a of (t, w, r, r') \<Rightarrow> \<exists>t'. \<delta> t (safe_hd w, safe_hd cs') = Some (t', True, False))"
+    using Cons
+    by (auto split: prod.splits)
+  have comp: "r \<leadsto>((w, []), (u, [])) r'"
+    using Cons(2)
+    by (auto simp: wrr'_def)
+  show ?case
+  proof (cases w)
+    case Nil
+    obtain t where t_def: "r\<leadsto>(([], []), cs, cs')t" "t\<leadsto>(([], []), cs', [])r'"
+      using comp_splitL[OF comp[unfolded Nil ws_def(1)]] ws_def
+      by auto
+    have concat_map_fst_Nil: "(\<forall>x \<in> set ws. fst x = []) \<Longrightarrow> concat (map fst ws) = []"
+      by auto
+    have one_step: "case concat (map fst (wrr' # ws)) of [] \<Rightarrow> cs' = []
+      | _ \<Rightarrow> \<exists>a \<in> set (zip (t # ts) (wrr' # ws)).
+        case a of (t, w, r, r') \<Rightarrow> \<exists>t'. \<delta> t (safe_hd w, safe_hd cs') = Some (t', True, False)"
+      using ws_def(4)
+      by (auto simp: wrr'_def Nil dest: concat_map_fst_Nil split: list.splits)
+    show ?thesis
+      apply (rule exI[of _ cs])
+      apply (rule exI[of _ cs'])
+      using ws_def(1,2,3) t_def one_step
+      by (auto simp: wrr'_def Nil intro!: exI[of _ "t # ts"])
+  next
+    case (Cons a as)
+    obtain t t' ds ds' where split: "u = ds @ ds'" "r\<leadsto>(([], a # as), ds, ds')t"
+      "\<delta> t (Symb a, safe_hd ds') = Some (t', True, False)" "t'\<leadsto>((as, []), ds', [])r'"
+      "t\<leadsto>((a # as, []), ds', [])r'"
+      using split_outs[OF comp[unfolded Cons]]
+      by fastforce
+    show ?thesis
+    proof (cases "length ds \<le> length cs")
+      case True
+      obtain cs'' where cs''_def: "cs = ds @ cs''"
+        using ws_def(1) split(1) True split_app[of ds ds' cs cs']
+        by auto
+      have ds'_def: "ds' = cs'' @ cs'"
+        using ws_def(1)[unfolded split(1) cs''_def]
+        by auto
+      have ts_ts': "\<And>t w r r'. (t, w, r, r') \<in> set (zip ts ws) \<Longrightarrow>
+        \<exists>t''. r \<leadsto>(([], w), (ds, ds')) t'' \<and> t'' \<leadsto>((w, []), (ds', [])) r'"
+        using ws_def(3) shift_compL[of _ _ ds cs'' cs', folded cs''_def ds'_def]
+        by fastforce
+      obtain ts' where ts'_def: "length ts' = length ts"
+        "\<And>t w r r'. (t, w, r, r') \<in> set (zip ts' ws) \<Longrightarrow>
+          r \<leadsto>(([], w), (ds, ds')) t \<and> t \<leadsto>((w, []), (ds', [])) r'"
+        using set_zip_upd4[OF ws_def(2) ts_ts'] ws_def(2)
+        by fastforce
+      show ?thesis
+        apply (rule exI[of _ ds])
+        apply (rule exI[of _ ds'])
+        using split(1) ts'_def(1) ws_def(2) split(2,3,5) ts'_def(2)
+        by (auto simp: wrr'_def Cons safe_hd_Cons intro!: exI[of _ "t # ts'"])
+    next
+      case False
+      obtain ds'' where ds''_def: "ds = cs @ ds''"
+        using ws_def(1) split(1) False split_app[of cs cs' ds ds']
+        by auto
+      have cs'_def: "cs' = ds'' @ ds'"
+        using ws_def(1)[unfolded split(1) ds''_def]
+        by auto
+      obtain t' where t'_def: "r \<leadsto>(([], a # as), (cs, cs')) t'"
+        "t' \<leadsto>((a # as, []), (cs', [])) r'"
+        using shift_compL[OF split(2)[unfolded ds''_def] split(5)]
+        by (auto simp: cs'_def)
+      have concat_map_fst_Cons: "concat (map fst ws) \<noteq> []"
+        using False cs'_def ds''_def ws_def(4)
+        by force
+      show ?thesis
+        apply (rule exI[of _ cs])
+        apply (rule exI[of _ cs'])
+        using ws_def t'_def concat_map_fst_Cons
+        by (fastforce simp: wrr'_def Cons intro!: exI[of _ "t' # ts"] split: list.splits)
+    qed
+  qed
+qed auto
 
 lemma first_reaches:
   assumes "q \<leadsto>((us @ us', us''), (vs @ vs', vs'')) q'" "us \<noteq> [] \<or> vs \<noteq> []"
@@ -566,6 +697,70 @@ proof (induction bs arbitrary: qs q' bs' rule: rev_induct)
   ultimately show ?case
     by (auto intro: step_FT_rev)
 qed auto
+
+lemma det_comp: "q\<leadsto>((u0, u @ u''), (v0 @ x, x'))r \<Longrightarrow> q\<leadsto>((u0 @ u, u''), v0 @ v, v')nr' \<Longrightarrow>
+  \<exists>w w' nr. v = w @ w' \<and> q\<leadsto>((u0, u @ u''), v0 @ w, w' @ v')nr \<and> nr\<leadsto>((u, u''), (w', v'))nr'"
+proof (induction q "((u0, u @ u''), (v0 @ x, x'))" r arbitrary: u0 v0 rule: computation.induct)
+  case (step_TT q a b q' as bs q'')
+  then show ?case
+    using move_one
+    by fastforce
+next
+  case (step_TF q a q' as q'')
+  show ?case
+  proof (cases v0)
+    case Nil
+    show ?thesis
+      using comp_split[OF step_TF(4)]
+      by (auto simp: Nil)
+  next
+    case (Cons b v0')
+    have step: "\<delta> q (Symb a, safe_hd ((v0 @ v) @ v')) = Some (q', True, False)"
+      using step_TF(1)
+      by (auto simp: Cons safe_hd_Cons)
+    have det_comp: "q'\<leadsto>((as @ u, u''), v0 @ v, v')nr'"
+      apply (rule computation.cases[OF step_TF(4)])
+      using step
+      by (auto simp: safe_hd_Cons)
+    show ?thesis
+      using step_TF(3)[OF det_comp] step
+      by (fastforce simp: Cons)
+  qed
+next
+  case (step_FT q a b q' v0' r')
+  show ?case
+  proof (cases v0)
+    case Nil
+    show ?thesis
+      using comp_split[OF step_FT(5)]
+      by (auto simp: Nil)
+  next
+    case (Cons b' v0'')
+    have v0'_def: "v0' = v0'' @ x"
+      using step_FT(4)
+      by (auto simp: Cons)
+    have step: "\<delta> q (safe_hd (a @ u @ u''), Symb b') = Some (q', False, True)"
+      using step_FT(1,4)
+      by (auto simp: Cons)
+    have det_comp: "q'\<leadsto>((a @ u, u''), v0'' @ v, v')nr'"
+      apply (rule computation.cases[OF step_FT(5)])
+      using step move_one
+         apply (auto simp: Cons safe_hd_Cons)
+      apply (metis append.assoc option.inject prod.inject safe_hd_Cons_app)
+      done
+    show ?thesis
+      using step_FT(3)[OF v0'_def det_comp] step
+      by (auto simp: Cons)
+  qed
+qed auto
+
+lemma det_comp_safe: "init\<leadsto>((u0 @ u, u''), v0 @ v, v')nr' \<Longrightarrow> init\<leadsto>((u0, u'), (v0 @ x, x'))r \<Longrightarrow>
+  safe_hd (u @ u'') = safe_hd u' \<Longrightarrow>
+  \<exists>w w' nr. v = w @ w' \<and> init\<leadsto>((u0, u @ u''), v0 @ w, w' @ v')nr \<and> nr\<leadsto>((u, u''), (w', v'))nr'"
+  apply (rule det_comp)
+  apply (rule comp_swap_same_hd)
+    apply auto
+  done
 
 end
 
@@ -852,8 +1047,7 @@ proof (induction us arbitrary: as bs vs q)
     by auto
 next
   case (Cons u us')
-  obtain r r' cs cs' where split: "vs = cs @ cs'"
-    "case cs of [] \<Rightarrow> q = r | _ \<Rightarrow> q\<leadsto>(([], u # us' @ []), cs, cs' @ [])r"
+  obtain r r' cs cs' where split: "vs = cs @ cs'" "q\<leadsto>(([], u # us' @ []), cs, cs' @ [])r"
     "\<delta> r (Symb u, safe_hd (cs' @ [])) = Some (r', True, False)" "r'\<leadsto>((us', []), cs', [])qf"
     using split_outs[OF Cons(3)]
     by auto
